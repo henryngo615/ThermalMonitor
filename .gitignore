@@ -1,0 +1,7 @@
+.build/
+*.o
+*.d
+AppIcon.iconset/
+*.tar.gz
+.DS_Store
+ThermalMonitor.app/
