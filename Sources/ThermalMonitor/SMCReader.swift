@@ -1,79 +1,83 @@
-import CSMC
+import CSensors
 
-class SMCReader {
-    let isOpen: Bool
-
-    init() { isOpen = smc_open() == 1 }
-    deinit { smc_close() }
-
-    func readTemperature(_ key: String) -> Double? {
-        guard isOpen else { return nil }
-        let t = smc_read_temp(key)
-        return (t > 1 && t < 150) ? t : nil
-    }
-
-    // Returns all live T-prefixed keys grouped by their second character:
-    // 'p' = P-cluster (CPU perf), 'e' = E-cluster (CPU eff), 'g' = GPU, etc.
-    func discoverTemps() -> (cpu: Double?, gpu: Double?) {
-        guard isOpen else { return (nil, nil) }
-
-        let maxKeys = 256
-        var buf = [[CChar]](repeating: [CChar](repeating: 0, count: 5), count: maxKeys)
-        var flatBuf = buf.flatMap { $0 }
-
-        let count = flatBuf.withUnsafeMutableBytes { ptr -> Int32 in
-            guard let base = ptr.baseAddress else { return 0 }
-            return smc_find_keys_with_prefix(CChar(UInt8(ascii: "T")), base.assumingMemoryBound(to: (CChar, CChar, CChar, CChar, CChar).self), Int32(maxKeys))
-        }
-
-        guard count > 0 else { return (nil, nil) }
-
-        // Rebuild key strings
-        var keys: [String] = []
-        for i in 0..<Int(count) {
-            let start = i * 5
-            let slice = Array(flatBuf[start..<(start+4)])
-            if let s = String(bytes: slice.map { UInt8(bitPattern: $0) }, encoding: .utf8) {
-                keys.append(s)
-            }
-        }
-
-        // CPU: average of Tp* (P-cluster) keys, falling back to Te* (E-cluster)
-        // GPU: average of Tg* keys
-        // We exclude obviously board/ambient keys (TB, TA, TV, Ts, TCHP etc.)
-        var cpuTemps: [Double] = []
-        var gpuTemps: [Double] = []
-
-        for key in keys {
-            guard let t = readTemperature(key) else { continue }
-            let second = key.dropFirst().first
-            switch second {
-            case "p": cpuTemps.append(t)   // Tp* — P-cluster
-            case "e": cpuTemps.append(t)   // Te* — E-cluster
-            case "g": gpuTemps.append(t)   // Tg* — GPU
-            default: break
-            }
-        }
-
-        // Fall back to TCMb / TCHP if no cluster keys found (some models)
-        if cpuTemps.isEmpty {
-            for key in ["TCMb", "TCHP", "TC0D", "TC0P", "TC0E"] {
-                if let t = readTemperature(key) { cpuTemps.append(t); break }
-            }
-        }
-
-        let cpu = cpuTemps.isEmpty ? nil : cpuTemps.max()
-        let gpu = gpuTemps.isEmpty ? nil : gpuTemps.max()
-        return (cpu, gpu)
-    }
+struct SMCTemperatures {
+    var cpu: Double?
+    var gpu: Double?
 }
 
-struct SMCTemps {
-    var cpuDie: Double?
-    var gpuDie: Double?
+/// Reads die temperatures out of the System Management Controller.
+///
+/// Sensor keys differ per SoC, so rather than hardcoding a list per machine the reader
+/// enumerates every `T*` key once and keeps the ones that read back as a plausible
+/// temperature. Subsequent reads only touch that shortlist.
+///
+/// Not thread safe: the discovery result is cached on first use, so `read()` must be
+/// called from one queue.
+final class SMCReader {
+    private let isOpen: Bool
+    private var keys: (cpu: [String], gpu: [String])?
 
-    static func read(from smc: SMCReader) -> SMCTemps {
-        let (cpu, gpu) = smc.discoverTemps()
-        return SMCTemps(cpuDie: cpu, gpuDie: gpu)
+    init() {
+        isOpen = smc_open() == 1
+    }
+
+    deinit {
+        if isOpen { smc_close() }
+    }
+
+    func read() -> SMCTemperatures {
+        guard isOpen else { return SMCTemperatures() }
+        // Discovery takes the better part of a second, so it happens on the first read
+        // — on the sensor queue — rather than blocking app launch.
+        let keys = self.keys ?? discoverKeys()
+        return SMCTemperatures(cpu: hottest(of: keys.cpu), gpu: hottest(of: keys.gpu))
+    }
+
+    private func discoverKeys() -> (cpu: [String], gpu: [String]) {
+        let all = Self.discoverTemperatureKeys()
+        // `Tp*` is the performance cluster, `Te*` the efficiency cluster, `Tg*` the GPU.
+        var cpu = all.filter { $0.hasPrefix("Tp") || $0.hasPrefix("Te") }
+        let gpu = all.filter { $0.hasPrefix("Tg") }
+
+        // Older SoCs expose a single CPU die sensor instead of per-cluster ones.
+        if cpu.isEmpty {
+            cpu = ["TCMb", "TCHP", "TC0D", "TC0P", "TC0E"].filter { all.contains($0) }
+        }
+
+        let discovered = (cpu: cpu, gpu: gpu)
+        keys = discovered
+        return discovered
+    }
+
+    /// The hottest sensor in the group, which is what thermal throttling actually
+    /// tracks — averaging would hide a single hot core.
+    private func hottest(of keys: [String]) -> Double? {
+        keys.compactMap(readTemperature).max()
+    }
+
+    private func readTemperature(_ key: String) -> Double? {
+        guard isOpen else { return nil }
+        let celsius = smc_read_temp(key)
+        return (1...150).contains(celsius) ? celsius : nil
+    }
+
+    /// Machines expose a few hundred `T*` keys; the buffer is sized well past that so
+    /// the scan is never truncated part way through the alphabet.
+    private static func discoverTemperatureKeys() -> [String] {
+        let capacity = 1024
+        var buffer = [CChar](repeating: 0, count: capacity * 5)
+
+        let found = buffer.withUnsafeMutableBufferPointer { pointer -> Int32 in
+            guard let base = pointer.baseAddress else { return 0 }
+            return base.withMemoryRebound(to: (CChar, CChar, CChar, CChar, CChar).self,
+                                          capacity: capacity) {
+                smc_find_keys_with_prefix(CChar(UInt8(ascii: "T")), $0, Int32(capacity))
+            }
+        }
+
+        return (0..<Int(found)).compactMap { index in
+            let bytes = buffer[(index * 5)..<(index * 5 + 4)].map { UInt8(bitPattern: $0) }
+            return String(bytes: bytes, encoding: .utf8)
+        }
     }
 }

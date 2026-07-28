@@ -1,67 +1,51 @@
 #!/bin/bash
-set -e
+# Builds ThermalMonitor.app and, unless --no-install is passed, installs it into
+# /Applications and launches it.
+set -euo pipefail
+
+cd "$(dirname "$0")"
 
 APP="ThermalMonitor.app"
-BINARY="ThermalMonitor"
-BUNDLE="$APP/Contents/MacOS"
-RESOURCES="$APP/Contents/Resources"
+INSTALLED="/Applications/$APP"
+CONTENTS="$APP/Contents"
 
 echo "Generating icon..."
-swift make_icon.swift 2>/dev/null
+swift make_icon.swift
 iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
 echo "Building release binary..."
 swift build -c release
 
-echo "Creating .app bundle..."
+echo "Creating $APP..."
 rm -rf "$APP"
-mkdir -p "$BUNDLE" "$RESOURCES"
+mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
+cp .build/release/ThermalMonitor "$CONTENTS/MacOS/"
+cp AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
+cp Info.plist "$CONTENTS/Info.plist"
 
-cp .build/release/$BINARY "$BUNDLE/"
-cp AppIcon.icns "$RESOURCES/AppIcon.icns"
+# Ad-hoc signature. Enough for Gatekeeper to run a locally built app and for
+# SMAppService to register it as a login item; no Apple Developer account needed.
+echo "Signing..."
+codesign --force --sign - "$APP"
 
-# Info.plist — LSUIElement hides Dock icon, required for menu bar apps
-cat > "$APP/Contents/Info.plist" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>ThermalMonitor</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.thermalmonitor.app</string>
-    <key>CFBundleName</key>
-    <string>ThermalMonitor</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>NSHumanReadableCopyright</key>
-    <string>MIT License</string>
-</dict>
-</plist>
-EOF
+if [ "${1:-}" = "--no-install" ]; then
+    echo "Built $APP (not installed)."
+    exit 0
+fi
 
-echo "Signing ad-hoc (no Apple Developer account required)..."
-codesign --force --deep --sign - "$APP"
+echo "Installing to $INSTALLED..."
+# Quit any copy that is already running, otherwise the replaced binary keeps polling.
+osascript -e 'tell application "ThermalMonitor" to quit' 2>/dev/null || true
+pkill -x ThermalMonitor 2>/dev/null || true
+sleep 1
+rm -rf "$INSTALLED"
+cp -R "$APP" "$INSTALLED"
 
-echo "Packaging..."
-tar -czf ThermalMonitor.tar.gz "$APP"
+# Drop the quarantine flag so the first launch does not need a right-click → Open.
+xattr -dr com.apple.quarantine "$INSTALLED" 2>/dev/null || true
 
-echo ""
-echo "Done!"
-echo "  App bundle : $APP"
-echo "  Shareable  : ThermalMonitor.tar.gz"
-echo ""
-echo "To install:"
-echo "  tar -xzf ThermalMonitor.tar.gz"
-echo "  mv ThermalMonitor.app /Applications/"
-echo "  open /Applications/ThermalMonitor.app"
+echo "Launching..."
+open "$INSTALLED"
+
+echo
+echo "Done — look for the thermometer in your menu bar."

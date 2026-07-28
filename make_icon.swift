@@ -107,7 +107,7 @@ func makeIconPNG(size: Int) -> Data {
     return mutableData as Data
 }
 
-let iconsetDir = "/Users/henryngo/Desktop/ThermalMonitor/AppIcon.iconset"
+let iconsetDir = FileManager.default.currentDirectoryPath + "/AppIcon.iconset"
 try? FileManager.default.createDirectory(atPath: iconsetDir, withIntermediateDirectories: true)
 
 // Required iconset sizes

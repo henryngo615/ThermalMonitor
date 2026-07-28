@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct ThermalMonitorApp: App {
-    @StateObject private var poller = PowerMetricsPoller()
+    @StateObject private var poller = SensorPoller()
 
     var body: some Scene {
         MenuBarExtra {

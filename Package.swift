@@ -6,14 +6,14 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(
-            name: "CSMC",
-            path: "Sources/CSMC",
-            linkerSettings: [.linkedFramework("IOKit")]
+            name: "CSensors",
+            path: "Sources/CSensors",
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
         ),
         .executableTarget(
             name: "ThermalMonitor",
-            dependencies: ["CSMC"],
-            path: "Sources/ThermalMonitor",
+            dependencies: ["CSensors"],
+            path: "Sources/ThermalMonitor"
         )
     ]
 )
