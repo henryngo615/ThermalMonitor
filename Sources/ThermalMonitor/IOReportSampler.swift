@@ -1,17 +1,6 @@
 import CSensors
 import Foundation
 
-/// One DVFS cluster (a group of cores, or the GPU) as reported by IOReport.
-struct ClusterLoad {
-    var name: String
-    /// Fraction of the interval the cluster spent out of idle, 0...1.
-    var activeResidency: Double
-    /// Residency in each non-idle DVFS state, lowest frequency first.
-    var stateResidencies: [Double]
-    /// Average frequency in GHz while active, if the DVFS table could be resolved.
-    var averageGHz: Double?
-}
-
 struct PowerSample {
     var cpuWatts: Double?
     var gpuWatts: Double?
@@ -27,11 +16,10 @@ struct PowerSample {
 
 struct IOReportSample {
     var power = PowerSample()
-    var cpuClusters: [ClusterLoad] = []
     var gpu: ClusterLoad?
 }
 
-/// Reads energy counters and DVFS residencies out of IOReport.
+/// Reads energy counters and GPU residency out of IOReport.
 ///
 /// IOReport counters are monotonic, so every reading is the difference between two
 /// snapshots. The sampler holds onto the previous snapshot and reports the delta.
@@ -39,7 +27,6 @@ final class IOReportSampler {
     private var handle: UnsafeMutableRawPointer?
     private var previous: CFDictionary?
     private var previousTime: CFAbsoluteTime = 0
-    private var clocks = ClockTables()
 
     var isAvailable: Bool { handle != nil }
 
@@ -73,8 +60,6 @@ final class IOReportSampler {
 
     private func parse(delta: CFDictionary, elapsed: Double) -> IOReportSample {
         var result = IOReportSample()
-        var cpuCores: [(cluster: String, load: RawResidency)] = []
-        var gpuRaw: RawResidency?
 
         guard let channels = iorep_channels(delta) else { return result }
         for index in 0..<CFArrayGetCount(channels) {
@@ -96,55 +81,16 @@ final class IOReportSampler {
                 default: break
                 }
 
-            case "CPU Stats":
-                guard let residency = RawResidency(channel: channel) else { continue }
-                cpuCores.append((cluster: clusterName(forCore: name), load: residency))
-
             case "GPU Stats":
-                gpuRaw = RawResidency(channel: channel)
+                if let residency = GPUResidency(channel: channel) {
+                    result.gpu = ClusterLoad(name: "GPU", activeResidency: residency.activeFraction)
+                }
 
             default:
                 break
             }
         }
-
-        result.cpuClusters = collapse(cores: cpuCores)
-        if let gpuRaw {
-            result.gpu = ClusterLoad(name: "GPU",
-                                     activeResidency: gpuRaw.activeFraction,
-                                     stateResidencies: gpuRaw.normalizedStates,
-                                     averageGHz: clocks.averageGHz(for: .gpu, states: gpuRaw.states))
-        }
         return result
-    }
-
-    /// IOReport channels come back as one row per core. Cores in the same cluster are
-    /// averaged together so the UI shows "Efficiency"/"Performance" rather than 18 rows.
-    private func collapse(cores: [(cluster: String, load: RawResidency)]) -> [ClusterLoad] {
-        var order: [String] = []
-        var grouped: [String: [RawResidency]] = [:]
-        for core in cores {
-            if grouped[core.cluster] == nil { order.append(core.cluster) }
-            grouped[core.cluster, default: []].append(core.load)
-        }
-
-        return order.compactMap { name in
-            guard let members = grouped[name], !members.isEmpty else { return nil }
-            let summed = members.dropFirst().reduce(members[0]) { $0.adding($1) }
-            let kind: ClockTables.Domain = name == "Efficiency" ? .efficiency : .performance
-            return ClusterLoad(name: name,
-                               activeResidency: summed.activeFraction,
-                               stateResidencies: summed.normalizedStates,
-                               averageGHz: clocks.averageGHz(for: kind, states: summed.states))
-        }
-    }
-
-    /// Apple names efficiency cores ECPU/MCPU and performance cores PCPU, optionally
-    /// with a cluster index (`MCPU10` is core 0 of the second efficiency cluster).
-    private func clusterName(forCore name: String) -> String {
-        if name.hasPrefix("P") { return "Performance" }
-        if name.hasPrefix("E") || name.hasPrefix("M") { return "Efficiency" }
-        return name
     }
 
     private func energyScale(of channel: CFDictionary) -> Double {
@@ -162,55 +108,31 @@ final class IOReportSampler {
     }
 }
 
-/// Residency ticks for one channel, split into idle and per-DVFS-state buckets.
-private struct RawResidency {
+/// GPU performance-state residency, split into powered-down and clocked buckets.
+///
+/// Unlike the CPU core channels this one is trustworthy: the `OFF` bucket tracks GPU
+/// energy draw closely (~5% active at 0.06 W, ~58% at 1.9 W on an M5 Max).
+private struct GPUResidency {
     var idle: Double
-    /// Ticks per active DVFS state, ordered lowest frequency first.
-    var states: [Double]
+    var active: Double
 
-    /// Channels report a leading `DOWN` and `IDLE` bucket (power-gated and clock-gated
-    /// respectively); everything after those is a real frequency step.
     init?(channel: CFDictionary) {
         let count = iorep_state_count(channel)
         guard count > 0 else { return nil }
 
         var idle = 0.0
-        var states: [Double] = []
+        var active = 0.0
         for index in 0..<count {
             let ticks = Double(iorep_state_residency(channel, index))
-            let name = (iorep_state_name(channel, index) as String?) ?? ""
-            if name == "DOWN" || name == "IDLE" || name == "OFF" {
-                idle += ticks
-            } else {
-                states.append(ticks)
+            switch (iorep_state_name(channel, index) as String?) ?? "" {
+            case "OFF", "DOWN", "IDLE": idle += ticks
+            default: active += ticks
             }
         }
-        guard !states.isEmpty else { return nil }
+        guard idle + active > 0 else { return nil }
         self.idle = idle
-        self.states = states
+        self.active = active
     }
 
-    private init(idle: Double, states: [Double]) {
-        self.idle = idle
-        self.states = states
-    }
-
-    func adding(_ other: RawResidency) -> RawResidency {
-        guard states.count == other.states.count else { return self }
-        return RawResidency(idle: idle + other.idle,
-                            states: zip(states, other.states).map(+))
-    }
-
-    var total: Double { idle + states.reduce(0, +) }
-
-    var activeFraction: Double {
-        let total = self.total
-        return total > 0 ? states.reduce(0, +) / total : 0
-    }
-
-    /// Per-state share of the whole interval, so the bars sum to `activeFraction`.
-    var normalizedStates: [Double] {
-        let total = self.total
-        return total > 0 ? states.map { $0 / total } : states.map { _ in 0 }
-    }
+    var activeFraction: Double { active / (idle + active) }
 }

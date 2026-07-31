@@ -108,8 +108,9 @@ struct MenuBarView: View {
         VStack(spacing: 5) {
             sectionTitle("Activity", icon: "waveform.path.ecg", color: .yellow)
 
-            ForEach(readings.cpuClusters, id: \.name) { cluster in
-                LoadRow(cluster: cluster, color: cluster.name == "Efficiency" ? .mint : .blue)
+            // Tiers arrive least-performant first, which is also how they are colored.
+            ForEach(Array(readings.cpuClusters.enumerated()), id: \.element.name) { index, cluster in
+                LoadRow(cluster: cluster, color: index == 0 ? .mint : .blue)
                     .padding(.horizontal, 14)
             }
             if let gpu = readings.gpu {
@@ -225,8 +226,7 @@ struct TempGauge: View {
     }
 }
 
-/// How busy one cluster is, with its average clock on the right when the machine
-/// publishes a DVFS table.
+/// How busy one CPU performance tier or the GPU is.
 struct LoadRow: View {
     let cluster: ClusterLoad
     let color: Color
@@ -235,7 +235,8 @@ struct LoadRow: View {
         HStack(spacing: 8) {
             Text(cluster.name)
                 .font(.system(size: 10, weight: .semibold))
-                .frame(width: 68, alignment: .leading)
+                .lineLimit(1)
+                .frame(width: 74, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.1))
@@ -246,17 +247,11 @@ struct LoadRow: View {
                 }
             }
             .frame(height: 10)
-            Text(trailingLabel)
+            Text(String(format: "%.0f%%", cluster.activeResidency * 100))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(.secondary)
-                .frame(width: 62, alignment: .trailing)
+                .frame(width: 38, alignment: .trailing)
         }
-    }
-
-    private var trailingLabel: String {
-        let percent = String(format: "%.0f%%", cluster.activeResidency * 100)
-        guard let ghz = cluster.averageGHz else { return percent }
-        return String(format: "%@ %.2fG", percent, ghz)
     }
 }
 

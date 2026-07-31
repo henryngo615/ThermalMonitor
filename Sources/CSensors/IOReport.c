@@ -71,11 +71,12 @@ static void merge_group(CFMutableDictionaryRef into, CFStringRef group, CFString
 void *iorep_subscribe(void) {
     if (!iorep_available()) return NULL;
 
-    // "Energy Model" carries the per-block energy counters (CPU/GPU/ANE/DRAM);
-    // the two performance-state groups carry per-core and GPU DVFS residencies.
+    // "Energy Model" carries the per-block energy counters (CPU/GPU/ANE/DRAM) and the
+    // GPU group carries its performance-state residencies. The matching CPU group is
+    // deliberately not subscribed: see ProcessorLoad for why its per-core channels
+    // cannot be used for utilization.
     CFMutableDictionaryRef desired = sCopyChannels(CFSTR("Energy Model"), NULL, 0, 0, 0);
     if (!desired) return NULL;
-    merge_group(desired, CFSTR("CPU Stats"), CFSTR("CPU Core Performance States"));
     merge_group(desired, CFSTR("GPU Stats"), CFSTR("GPU Performance States"));
 
     CFMutableDictionaryRef subscribed = NULL;

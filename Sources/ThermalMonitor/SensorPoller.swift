@@ -23,6 +23,7 @@ final class SensorPoller: ObservableObject {
     // which would otherwise stall app launch.
     private var smc: SMCReader?
     private var ioreport: IOReportSampler?
+    private var processor: ProcessorLoad?
     private var timer: Timer?
 
     func start() {
@@ -43,11 +44,14 @@ final class SensorPoller: ObservableObject {
             guard let self else { return }
             let smc = self.smc ?? SMCReader()
             let ioreport = self.ioreport ?? IOReportSampler()
+            let processor = self.processor ?? ProcessorLoad()
             self.smc = smc
             self.ioreport = ioreport
+            self.processor = processor
 
             let temperatures = smc.read()
             let sampled = ioreport.sample()
+            let clusters = processor.read()
             let thermalState = ProcessInfo.processInfo.thermalState
             let powerAvailable = ioreport.isAvailable
 
@@ -59,9 +63,9 @@ final class SensorPoller: ObservableObject {
                 next.thermalPressure = thermalState
                 // The first tick has nothing to difference against, and a dropped sample
                 // should not blank the panel — in both cases keep the previous numbers.
+                if !clusters.isEmpty { next.cpuClusters = clusters }
                 if let sampled {
                     next.power = sampled.power
-                    next.cpuClusters = sampled.cpuClusters
                     next.gpu = sampled.gpu
                 }
                 self.readings = next

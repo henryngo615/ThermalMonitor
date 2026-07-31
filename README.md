@@ -8,8 +8,7 @@ and power draw for Apple Silicon Macs. No root, no sudo, no helper daemon.
 - **Menu bar icon** — live CPU temperature with color coding (green → orange → red)
 - **Popover dashboard** — click the icon for full stats:
   - CPU & GPU die temperature gauges
-  - Per-cluster activity (efficiency / performance / GPU), with average clock speed on
-    the SoCs that publish a DVFS table
+  - Activity per CPU performance tier, plus the GPU
   - CPU, GPU, DRAM and total package power
   - System thermal pressure
 - **Open at Login** toggle
@@ -39,16 +38,25 @@ right-click → Open dance. To uninstall, quit it from the popover and delete
 |---|---|
 | Temperatures | SMC over IOKit. Every `T*` key is enumerated once at startup and the ones that read back as a plausible temperature are kept, so `Tp*` (performance cluster), `Te*` (efficiency cluster) and `Tg*` (GPU) are found without a hardcoded per-SoC key list. |
 | Power | `IOReport` "Energy Model" energy counters, differenced between samples. |
-| Activity | `IOReport` CPU/GPU performance-state residencies. Time outside the `DOWN`/`IDLE`/`OFF` buckets is the active fraction. |
-| Clock speed | Residencies weighted by the `voltage-states*` DVFS tables in the IO registry. |
+| CPU activity | `host_processor_info` tick counters, aggregated per performance tier. Tier names and core counts come from `hw.perflevel*`. |
+| GPU activity | `IOReport` GPU performance-state residency. Time outside the `OFF` bucket is the active fraction. |
 | Thermal pressure | `ProcessInfo.thermalState`. |
 
 `IOReport` is the same private framework `powermetrics` reads, but unlike `powermetrics`
 it does not need elevated privileges — which is why this app needs no sudoers entry and
 spawns no subprocesses.
 
-The `voltage-states*` frequency tables are zeroed out on some newer machines (M5 and
-later). There the clock readout is simply omitted; activity and power are unaffected.
+CPU activity deliberately does *not* come from IOReport, even though it sits right next
+to the power counters. On some SoCs the per-core `CPU Core Performance States` channels
+report the cluster's shared DVFS state replicated across every core, with no idle
+accounting: on an M5 Max all six `PCPU*` channels return byte-identical residency with
+`IDLE=0` whether the machine is idle or saturated. That reads as a permanent 100%. The
+Mach tick counters are public API and correct everywhere, so they are used instead.
+
+There is no clock-speed readout. It would come from weighting those same residencies by
+the `voltage-states*` DVFS tables in the IO registry, and those tables are published
+with the frequencies zeroed on M5 and later — so the feature could not be verified on
+the hardware at hand and was left out rather than shipped as a guess.
 
 ## Privacy & Security
 
@@ -66,8 +74,8 @@ PRs welcome. Key files:
 | `Sources/CSensors/SMC.c` | IOKit SMC reader |
 | `Sources/CSensors/IOReport.c` | `libIOReport` symbol resolution and wrappers |
 | `Sources/ThermalMonitor/SMCReader.swift` | Sensor key discovery |
-| `Sources/ThermalMonitor/IOReportSampler.swift` | Energy and residency sampling |
-| `Sources/ThermalMonitor/ClockTables.swift` | DVFS table lookup |
+| `Sources/ThermalMonitor/IOReportSampler.swift` | Energy and GPU residency sampling |
+| `Sources/ThermalMonitor/ProcessorLoad.swift` | Per-tier CPU utilization |
 | `Sources/ThermalMonitor/SensorPoller.swift` | Polling loop |
 | `Sources/ThermalMonitor/ContentView.swift` | All UI |
 
