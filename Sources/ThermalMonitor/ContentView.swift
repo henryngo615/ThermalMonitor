@@ -38,6 +38,10 @@ struct MenuBarView: View {
                 activity
                 Divider().padding(.horizontal, 14)
                 power
+                if let battery = readings.battery {
+                    Divider().padding(.horizontal, 14)
+                    self.battery(battery)
+                }
             }
             .padding(.vertical, 10)
             Divider()
@@ -142,6 +146,34 @@ struct MenuBarView: View {
                 }
                 if readings.power.totalWatts == nil {
                     placeholder
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
+    /// Charge or discharge power, which is the whole machine's draw while on battery —
+    /// the power section above only sees the SoC.
+    private func battery(_ battery: BatterySample) -> some View {
+        VStack(spacing: 5) {
+            sectionTitle("Battery", icon: battery.flow.icon, color: battery.flow.color)
+
+            HStack(spacing: 8) {
+                MetricPill(value: battery.wattsText,
+                           label: battery.flow.label,
+                           color: battery.flow.color)
+                if let percentage = battery.percentage {
+                    MetricPill(value: "\(Int(percentage.rounded()))%",
+                               label: "Level",
+                               color: .green)
+                }
+                if let minutes = battery.minutesRemaining {
+                    MetricPill(value: minutes.asDuration,
+                               label: battery.flow == .charging ? "To Full" : "Left",
+                               color: .indigo)
+                }
+                if let adapter = battery.adapterWatts {
+                    MetricPill(value: MetricPill.watts(adapter), label: "Adapter", color: .teal)
                 }
             }
             .padding(.horizontal, 14)
@@ -255,25 +287,43 @@ struct LoadRow: View {
     }
 }
 
-struct PowerPill: View {
+/// One captioned figure in a row of them.
+struct MetricPill: View {
+    let value: String
     let label: String
-    let watts: Double
     let color: Color
 
     var body: some View {
         VStack(spacing: 2) {
-            Text(String(format: watts < 10 ? "%.2fW" : "%.1fW", watts))
+            Text(value)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(color)
                 .monospacedDigit()
             Text(label)
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
         .background(color.opacity(0.08))
         .cornerRadius(7)
+    }
+
+    /// Two decimals below 10 W, where a tenth is most of the interesting range.
+    static func watts(_ watts: Double) -> String {
+        String(format: abs(watts) < 10 ? "%.2fW" : "%.1fW", abs(watts))
+    }
+}
+
+struct PowerPill: View {
+    let label: String
+    let watts: Double
+    let color: Color
+
+    var body: some View {
+        MetricPill(value: MetricPill.watts(watts), label: label, color: color)
     }
 }
 
@@ -326,6 +376,46 @@ extension Color {
         if celsius > 90 { return .red }
         if celsius > 75 { return .orange }
         return idle
+    }
+}
+
+extension BatterySample {
+    /// Signed, so the direction reads at a glance without the caption.
+    var wattsText: String {
+        switch flow {
+        case .idle:        return "0W"
+        case .charging:    return "+" + MetricPill.watts(watts)
+        case .discharging: return "−" + MetricPill.watts(watts)
+        }
+    }
+}
+
+extension BatterySample.Flow {
+    var label: String {
+        switch self {
+        case .charging:    return "Charging"
+        case .discharging: return "Discharging"
+        case .idle:        return "On Power"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .charging:    return .green
+        case .discharging: return .orange
+        case .idle:        return .secondary
+        }
+    }
+
+    var icon: String {
+        self == .discharging ? "battery.50" : "battery.100.bolt"
+    }
+}
+
+extension Int {
+    /// Minutes as `h:mm`.
+    var asDuration: String {
+        String(format: "%d:%02d", self / 60, self % 60)
     }
 }
 
