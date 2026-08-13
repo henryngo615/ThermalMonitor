@@ -391,9 +391,12 @@ extension BatterySample {
 
     var statusLabel: String {
         switch flow {
-        case .charging:    return "Charging"
-        case .discharging: return "Discharging"
-        case .idle:        return isOnAC ? "On Power" : "Idle"
+        case .charging: return "Charging"
+        // Draining with an adapter attached is a real state — during USB-C power
+        // negotiation, or under a load the adapter cannot cover — and a bare
+        // "Discharging" next to an adapter rating reads like the app is confused.
+        case .discharging: return isOnAC ? "AC · Draining" : "Discharging"
+        case .idle: return isOnAC ? "On Power" : "Idle"
         }
     }
 
