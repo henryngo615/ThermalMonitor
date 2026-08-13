@@ -7,6 +7,8 @@ struct Readings {
     var cpuClusters: [ClusterLoad] = []
     var gpu: ClusterLoad?
     var thermalPressure: ProcessInfo.ThermalState = .nominal
+    /// Nil on machines without a battery.
+    var battery: BatterySample?
 }
 
 /// Samples every sensor on a background queue and republishes on the main thread.
@@ -24,6 +26,7 @@ final class SensorPoller: ObservableObject {
     private var smc: SMCReader?
     private var ioreport: IOReportSampler?
     private var processor: ProcessorLoad?
+    private var battery: BatteryReader?
     private var timer: Timer?
 
     func start() {
@@ -45,13 +48,16 @@ final class SensorPoller: ObservableObject {
             let smc = self.smc ?? SMCReader()
             let ioreport = self.ioreport ?? IOReportSampler()
             let processor = self.processor ?? ProcessorLoad()
+            let battery = self.battery ?? BatteryReader()
             self.smc = smc
             self.ioreport = ioreport
             self.processor = processor
+            self.battery = battery
 
             let temperatures = smc.read()
             let sampled = ioreport.sample()
             let clusters = processor.read()
+            let batterySample = battery.read()
             let thermalState = ProcessInfo.processInfo.thermalState
             let powerAvailable = ioreport.isAvailable
 
@@ -61,6 +67,7 @@ final class SensorPoller: ObservableObject {
                 next.cpuTemp = temperatures.cpu
                 next.gpuTemp = temperatures.gpu
                 next.thermalPressure = thermalState
+                next.battery = batterySample
                 // The first tick has nothing to difference against, and a dropped sample
                 // should not blank the panel — in both cases keep the previous numbers.
                 if !clusters.isEmpty { next.cpuClusters = clusters }
