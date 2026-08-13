@@ -50,15 +50,24 @@ final class BatteryReader {
         let isOnAC = Self.bool(properties["ExternalConnected"])
         let isCharging = Self.bool(properties["IsCharging"])
 
+        // Direction comes from the controller's flags rather than the sign of the
+        // current, because the sign is not dependable: Apple Silicon controllers report
+        // an unsigned magnitude, the same positive value whether the pack is filling or
+        // draining. The flags say which it is, and the current only says how fast.
         let flow: BatterySample.Flow
-        if watts < Self.idleThreshold {
-            flow = .idle
+        let moving = watts >= Self.idleThreshold
+        if !isOnAC {
+            flow = moving ? .discharging : .idle
         } else if isCharging {
-            // The controller's own charging flag wins over the sign of the current,
-            // which a few models publish inverted.
-            flow = .charging
+            flow = moving ? .charging : .idle
+        } else if milliamps < 0 {
+            // Plugged into an adapter that cannot keep up, on one of the controllers
+            // that does sign its current. Where the current is unsigned this case is
+            // indistinguishable from a topped-up pack, so it is left as idle rather
+            // than guessing a direction.
+            flow = moving ? .discharging : .idle
         } else {
-            flow = milliamps > 0 ? .charging : .discharging
+            flow = .idle
         }
 
         return BatterySample(flow: flow,

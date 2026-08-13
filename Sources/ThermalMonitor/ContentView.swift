@@ -156,11 +156,11 @@ struct MenuBarView: View {
     /// the power section above only sees the SoC.
     private func battery(_ battery: BatterySample) -> some View {
         VStack(spacing: 5) {
-            sectionTitle("Battery", icon: battery.flow.icon, color: battery.flow.color)
+            sectionTitle("Battery", icon: battery.icon, color: battery.flow.color)
 
             HStack(spacing: 8) {
                 MetricPill(value: battery.wattsText,
-                           label: battery.flow.label,
+                           label: battery.statusLabel,
                            color: battery.flow.color)
                 if let percentage = battery.percentage {
                     MetricPill(value: "\(Int(percentage.rounded()))%",
@@ -388,27 +388,27 @@ extension BatterySample {
         case .discharging: return "−" + MetricPill.watts(watts)
         }
     }
-}
 
-extension BatterySample.Flow {
-    var label: String {
-        switch self {
+    var statusLabel: String {
+        switch flow {
         case .charging:    return "Charging"
         case .discharging: return "Discharging"
-        case .idle:        return "On Power"
+        case .idle:        return isOnAC ? "On Power" : "Idle"
         }
     }
 
+    var icon: String {
+        flow == .charging || (flow == .idle && isOnAC) ? "battery.100.bolt" : "battery.50"
+    }
+}
+
+extension BatterySample.Flow {
     var color: Color {
         switch self {
         case .charging:    return .green
         case .discharging: return .orange
         case .idle:        return .secondary
         }
-    }
-
-    var icon: String {
-        self == .discharging ? "battery.50" : "battery.100.bolt"
     }
 }
 
