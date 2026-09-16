@@ -10,7 +10,6 @@ and power draw for Apple Silicon Macs. No root, no sudo, no helper daemon.
   - CPU & GPU die temperature gauges
   - Activity per CPU performance tier, plus the GPU
   - CPU, GPU, DRAM and total package power
-  - Battery charge/discharge wattage, charge level, time remaining and adapter rating
   - System thermal pressure
 - **Open at Login** toggle
 - Auto-refreshes every 2 seconds
@@ -39,7 +38,6 @@ right-click → Open dance. To uninstall, quit it from the popover and delete
 |---|---|
 | Temperatures | SMC over IOKit. Every `T*` key is enumerated once at startup and the ones that read back as a plausible temperature are kept, so `Tp*` (performance cluster), `Te*` (efficiency cluster) and `Tg*` (GPU) are found without a hardcoded per-SoC key list. |
 | Power | `IOReport` "Energy Model" energy counters, differenced between samples. |
-| Battery power | Pack voltage × current from the `AppleSmartBattery` IO registry entry. Signed: into the battery while charging, out of it while discharging — so on battery it is the whole machine's draw, not just the SoC's. Hidden on machines without a battery. |
 | CPU activity | `host_processor_info` tick counters, aggregated per performance tier. Tier names and core counts come from `hw.perflevel*`. |
 | GPU activity | `IOReport` GPU performance-state residency. Time outside the `OFF` bucket is the active fraction. |
 | Thermal pressure | `ProcessInfo.thermalState`. |
@@ -78,7 +76,6 @@ PRs welcome. Key files:
 | `Sources/ThermalMonitor/SMCReader.swift` | Sensor key discovery |
 | `Sources/ThermalMonitor/IOReportSampler.swift` | Energy and GPU residency sampling |
 | `Sources/ThermalMonitor/ProcessorLoad.swift` | Per-tier CPU utilization |
-| `Sources/ThermalMonitor/BatteryReader.swift` | Battery charge/discharge power |
 | `Sources/ThermalMonitor/SensorPoller.swift` | Polling loop |
 | `Sources/ThermalMonitor/ContentView.swift` | All UI |
 

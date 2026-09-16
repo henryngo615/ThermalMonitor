@@ -38,10 +38,6 @@ struct MenuBarView: View {
                 activity
                 Divider().padding(.horizontal, 14)
                 power
-                if let battery = readings.battery {
-                    Divider().padding(.horizontal, 14)
-                    self.battery(battery)
-                }
             }
             .padding(.vertical, 10)
             Divider()
@@ -146,34 +142,6 @@ struct MenuBarView: View {
                 }
                 if readings.power.totalWatts == nil {
                     placeholder
-                }
-            }
-            .padding(.horizontal, 14)
-        }
-    }
-
-    /// Charge or discharge power, which is the whole machine's draw while on battery —
-    /// the power section above only sees the SoC.
-    private func battery(_ battery: BatterySample) -> some View {
-        VStack(spacing: 5) {
-            sectionTitle("Battery", icon: battery.icon, color: battery.flow.color)
-
-            HStack(spacing: 8) {
-                MetricPill(value: battery.wattsText,
-                           label: battery.statusLabel,
-                           color: battery.flow.color)
-                if let percentage = battery.percentage {
-                    MetricPill(value: "\(Int(percentage.rounded()))%",
-                               label: "Level",
-                               color: .green)
-                }
-                if let minutes = battery.minutesRemaining {
-                    MetricPill(value: minutes.asDuration,
-                               label: battery.flow == .charging ? "To Full" : "Left",
-                               color: .indigo)
-                }
-                if let adapter = battery.adapterWatts {
-                    MetricPill(value: MetricPill.watts(adapter), label: "Adapter", color: .teal)
                 }
             }
             .padding(.horizontal, 14)
@@ -376,49 +344,6 @@ extension Color {
         if celsius > 90 { return .red }
         if celsius > 75 { return .orange }
         return idle
-    }
-}
-
-extension BatterySample {
-    /// Signed, so the direction reads at a glance without the caption.
-    var wattsText: String {
-        switch flow {
-        case .idle:        return "0W"
-        case .charging:    return "+" + MetricPill.watts(watts)
-        case .discharging: return "−" + MetricPill.watts(watts)
-        }
-    }
-
-    var statusLabel: String {
-        switch flow {
-        case .charging: return "Charging"
-        // Draining with an adapter attached is a real state — during USB-C power
-        // negotiation, or under a load the adapter cannot cover — and a bare
-        // "Discharging" next to an adapter rating reads like the app is confused.
-        case .discharging: return isOnAC ? "AC · Draining" : "Discharging"
-        case .idle: return isOnAC ? "On Power" : "Idle"
-        }
-    }
-
-    var icon: String {
-        flow == .charging || (flow == .idle && isOnAC) ? "battery.100.bolt" : "battery.50"
-    }
-}
-
-extension BatterySample.Flow {
-    var color: Color {
-        switch self {
-        case .charging:    return .green
-        case .discharging: return .orange
-        case .idle:        return .secondary
-        }
-    }
-}
-
-extension Int {
-    /// Minutes as `h:mm`.
-    var asDuration: String {
-        String(format: "%d:%02d", self / 60, self % 60)
     }
 }
 
